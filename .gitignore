@@ -1,0 +1,13 @@
+.deps/
+dist/
+releases/
+*.user
+*.log
+*.dll
+*.exe
+*.bin
+*.pak
+*.zip
+components.json
+profiles.json
+settings.json
