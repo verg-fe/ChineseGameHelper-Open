@@ -125,6 +125,7 @@ public static class StackEngine {
  }
  public static void ApplyPrepared(Game g,StackProfile p,Dictionary<string,string> files,Action<string> report,Dictionary<string,string> preserved=null){
   Core.EnsureStopped(g);if(Core.GetRecord(g)!=null)throw new Exception("请先恢复独立版插件。");
+  files=ResolutionPresets.Prepare(g,p,files);
   string folder=Path.GetDirectoryName(g.Exe),rp=RecordPath(g);if(File.Exists(rp+".pending"))throw new Exception("检测到未完成的组合事务，请先恢复已安装文件。");
   var previous=Record(g);if(previous!=null){VerifyCurrent(previous);if(!previous.After.Keys.OrderBy(x=>x).SequenceEqual(files.Keys.OrderBy(x=>x)))throw new Exception("更换安装包／加载名称会改变文件集合，请先恢复旧组合再安装。");}
   foreach(var name in ProxyNames){string f=Path.Combine(folder,name);bool keep=preserved!=null&&preserved.ContainsKey(name)&&!files.ContainsKey(name)&&File.Exists(f)&&Core.Digest(f)==preserved[name];if(File.Exists(f)&&(previous==null||!previous.After.ContainsKey(name))&&!keep&&!Core.IsMicrosoftSystemDll(f))throw new Exception("发现其他加载器："+name+"。请先处理旧模组，不会覆盖。");}

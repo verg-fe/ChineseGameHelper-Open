@@ -35,16 +35,24 @@ public static class LegacyBridge {
   if(!Directory.Exists(Path.Combine(dest,"Licenses")))throw new Exception("桥接包缺少 Licenses 声明目录。");
  }
  public static bool X86(string path){try{using(var b=new BinaryReader(File.OpenRead(path))){if(b.ReadUInt16()!=0x5a4d)return false;b.BaseStream.Position=0x3c;int off=b.ReadInt32();if(off<64||off>b.BaseStream.Length-6)return false;b.BaseStream.Position=off;return b.ReadUInt32()==0x4550&&b.ReadUInt16()==0x14c;}}catch{return false;}}
+ public static bool IsL4D2(Game g){return Path.GetFileName(g.Exe).Equals("left4dead2.exe",StringComparison.OrdinalIgnoreCase);}
+ public static string OfflineArguments(Game g){if(!IsL4D2(g))throw new Exception("非 L4D2 游戏。");return "-insecure -novid";}
  public static Game Target(Game g){string exe=g.Exe;
+  if(IsL4D2(g)&&X86(exe)){
+   string module=Path.Combine(Path.GetDirectoryName(exe),"bin","shaderapidx9.dll");
+   if(File.Exists(module)&&X86(module))exe=module;
+  }
   if(Path.GetFileName(exe).Equals("RA3.exe",StringComparison.OrdinalIgnoreCase)){
    string actual=Path.Combine(Path.GetDirectoryName(exe),"Data","ra3_1.12.game");if(File.Exists(actual))exe=actual;
   }
   return new Game{Name=g.Name,Exe=exe,Root=g.Root,Source=g.Source,OfflineOnly=g.OfflineOnly};
  }
  public static string Api(Game g){var t=Target(g);if(!X86(t.Exe))return null;string s=Encoding.ASCII.GetString(File.ReadAllBytes(t.Exe));if(s.IndexOf("d3d9.dll",StringComparison.OrdinalIgnoreCase)>=0)return "d3d9";if(s.IndexOf("d3d11.dll",StringComparison.OrdinalIgnoreCase)>=0)return "d3d11";return null;}
- public static bool Installed(Game g){var r=StackEngine.Record(Target(g));return r!=null&&r.Profile!=null&&r.Profile.Input=="reshade32";}
+ public static bool Installed(Game g){var r=StackEngine.Record(Target(g));return r!=null&&r.Profile!=null&&(r.Profile.Input=="reshade32"||r.Profile.Input=="reshade64");}
+ public static bool Installed64(Game g){var r=StackEngine.Record(Target(g));return r!=null&&r.Profile!=null&&r.Profile.Input=="reshade64";}
+ public static string DisplayStatus(Game g){string ini=Path.Combine(Path.GetDirectoryName(Target(g).Exe),"amd-nr.ini");return (Installed64(g)?"64位神经桥接 ":"老游戏桥接 ")+Version(g)+(StackEngine.ReadIni(Core.Read(ini),"amd-nr","StartOn")=="1"?" · 配置开启":" · 配置关闭");}
  public static bool Pending(Game g){return File.Exists(StackEngine.RecordPath(Target(g))+".pending");}
- public static string Check(Game g){string api=Api(g);return api==null?"老游戏桥接：仅支持已识别的32位 DX9 / DX11 程序；64位游戏请使用其他方案。":"可尝试 ReShade 32位 "+api.ToUpperInvariant()+" 神经渲染桥接（实验性）。\r\n渲染程序："+Target(g).Exe+"\r\n不需要游戏内 FSR 开关；本路线不包含帧生成。";}
+ public static string Check(Game g){if(Installed64(g))return "已识别64位 ReShade 神经处理桥接，运行库 "+Version(g)+"。\r\n不需要游戏内FSR选项；战斗场景与4K稳定性仍需验证。";string api=Api(g);return api==null?"老游戏桥接：仅支持已识别的32位 DX9 / DX11 程序；64位游戏请使用其他方案。":"可尝试 ReShade 32位 "+api.ToUpperInvariant()+" 神经渲染桥接（实验性）。\r\n渲染程序："+Target(g).Exe+"\r\n不需要游戏内 FSR 开关；本路线不包含帧生成。";}
  public static Dictionary<string,string> Plan(Game g){return Plan(g,true);}
  public static Dictionary<string,string> Plan(Game g,bool modern){
   Prepare(modern);string Package=PackageFor(modern);var Hashes=modern?ModernHashes:LegacyBridge.Hashes;
@@ -54,11 +62,13 @@ public static class LegacyBridge {
   foreach(var pair in Hashes)files[pair.Key=="ReShade32.dll"?(api=="d3d9"?"d3d9.dll":"dxgi.dll"):pair.Key]=Path.Combine(Package,pair.Key);
   foreach(var f in Directory.GetFiles(Path.Combine(Package,"Licenses")))files[Path.Combine("AMDNR-Licenses",Path.GetFileName(f))]=f;
   string stage=Path.Combine(StackEngine.Home,"prepared",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(stage);
-  string ini=Path.Combine(stage,"amd-nr.ini");File.WriteAllText(ini,"[amd-nr]\r\nStartOn=0\r\nToggleKey=35\r\nToggleMods=1\r\nDisableOnAltTab=1\r\nScale=0.5\r\nPasses=1\r\nEncoding=0\r\nLanguage=0\r\nColourStrength=0.25\r\nStructure=1\r\nSkin=-1\r\nInline=1\r\nAsync=1\r\n",new UTF8Encoding(false));files["amd-nr.ini"]=ini;
+  string ini=Path.Combine(stage,"amd-nr.ini");File.WriteAllText(ini,"[amd-nr]\r\nStartOn=0\r\nToggleKey=35\r\nToggleMods=1\r\nDisableOnAltTab=1\r\nScale=0.5\r\nPasses=1\r\nEncoding=0\r\nLanguage=0\r\nColourStrength=0.25\r\nStructure=1\r\nSkin=-1\r\nInline=1\r\nAsync=1\r\n",new UTF8Encoding(false));if(IsL4D2(g))File.WriteAllText(ini,StackEngine.Patch(Core.Read(ini),"amd-nr","Scale","0.25"),new UTF8Encoding(false));files["amd-nr.ini"]=ini;
   string reshade=Path.Combine(stage,"ReShade.ini");File.WriteAllText(reshade,"[ADDON]\r\nAddonPath=.\r\nDisabledAddons=\r\n[GENERAL]\r\nPerformanceMode=1\r\n[OVERLAY]\r\nTutorialProgress=4\r\n",new UTF8Encoding(false));files["ReShade.ini"]=reshade;return files;
  }
  public static void Install(Game g,Action<string> report){Install(g,Version(g)!="0.3.0",report,true);}
  public static void Install(Game g,bool modern,Action<string> report,bool enable){
+  if(Installed64(g))throw new Exception("已安装64位试验桥接，请使用现有开关或恢复功能；不要用32位组件覆盖。");
+  if(IsL4D2(g)&&!g.OfflineOnly)throw new Exception("L4D2 桥接仅用于单机测试，请先选择仅离线模式；助手会使用 -insecure 启动。恢复联机前必须卸载桥接。");
   Core.EnsureStopped(g);var t=Target(g);Core.EnsureStopped(t);
   foreach(var f in Core.Files(g.Root,12,CancellationToken.None))if(Regex.IsMatch(f,"easyanticheat|battleye|beservice|anticheatexpert|eaanticheat|vgk\\.|faceit",RegexOptions.IgnoreCase)&&!g.OfflineOnly)throw new Exception("发现反作弊组件，请先核对游戏支持的离线模式。");
   if(Core.GetRecord(g)!=null)throw new Exception("请先恢复独立版插件。");
@@ -71,14 +81,22 @@ public static class LegacyBridge {
   StackEngine.ApplyPrepared(t,new StackProfile{Name="ReShade AMD NR 32位桥接 / Daniel "+(modern?"0.4.0 本地试验":"0.3.0 原版"),Package=PackageFor(modern),Input="reshade32",Output="off",Neural=true,Proxy=Api(g)=="d3d9"?"d3d9.dll":"dxgi.dll"},files,report,preserved);
   if(enable)SetEnabled(g,true);
  }
- public static void SetEnabled(Game g,bool enabled){Core.EnsureStopped(g);var t=Target(g);Core.EnsureStopped(t);if(!Installed(g))throw new Exception("尚未安装老游戏桥接。");string p=Path.Combine(Path.GetDirectoryName(t.Exe),"amd-nr.ini");string ini=StackEngine.Patch(Core.Read(p),"amd-nr","StartOn",enabled?"1":"0");if(enabled)ini=StackEngine.Patch(ini,"amd-nr","DisableOnAltTab","0");File.WriteAllText(p,ini,new UTF8Encoding(false));}
+ public static void SetEnabled(Game g,bool enabled){Core.EnsureStopped(g);var t=Target(g);Core.EnsureStopped(t);if(!Installed(g))throw new Exception("尚未安装老游戏桥接。");string p=Path.Combine(Path.GetDirectoryName(t.Exe),"amd-nr.ini");string ini=StackEngine.Patch(Core.Read(p),"amd-nr","StartOn",enabled?"1":"0");if(enabled)ini=StackEngine.Patch(ini,"amd-nr","DisableOnAltTab",(IsL4D2(g)||Installed64(g))?"1":"0");File.WriteAllText(p,ini,new UTF8Encoding(false));}
  public static void Restore(Game g){Core.EnsureStopped(g);if(!Installed(g)&&!Pending(g))throw new Exception("没有桥接安装记录。");StackEngine.Restore(Target(g));}
 }
 
 public class LegacyBridgeForm:Form {
+ void Build64(){
+  Controls.Add(new Label{Text="64位 ReShade 神经处理 · 运行库 "+LegacyBridge.Version(game)+"\r\n\r\n已识别本助手登记的64位桥接。\r\n潜渊症目前只完成720p菜单短测，战斗场景与4K未验证。\r\nHome 打开插件，Ctrl+End 切换效果；不需要游戏内FSR选项。\r\n这条路线不包含插帧。先使用低分辨率单机测试。",Location=new Point(18,18),Size=new Size(684,200)});
+  buttons.SetBounds(18,267,684,140);Controls.Add(buttons);
+  Add("下次启动开启",()=>LegacyBridge.SetEnabled(game,true));Add("下次启动关闭",()=>LegacyBridge.SetEnabled(game,false));Add("卸载并恢复文件",()=>LegacyBridge.Restore(game));
+  status.SetBounds(18,415,684,65);Controls.Add(status);status.Text=LegacyBridge.DisplayStatus(game)+"。配置开启不等于游戏内已生效。";
+  FormClosing+=delegate(object sender,FormClosingEventArgs e){if(busy)e.Cancel=true;};
+ }
  Game game;ComboBox version=new ComboBox();Label status=new Label();FlowLayoutPanel buttons=new FlowLayoutPanel();bool busy;
  public LegacyBridgeForm(Game g){game=g;Text="老游戏神经渲染 · "+g.Name;ClientSize=new Size(720,490);Font=new Font("Microsoft YaHei UI",10);StartPosition=FormStartPosition.CenterParent;
-  Controls.Add(new Label{Text=LegacyBridge.Check(g)+"\r\n\r\n0.4.0：本地试验适配，已通过红警3菜单短测；4K长时间稳定性待验证。\r\n0.3.0：保留原版，选中后可切回。两版均不内置，需自行取得并导入匹配目录。\r\n新安装默认关闭，50%分辨率、1次处理。版本切换保留画面设置。\r\n“下次启动开启”会关闭切出自动停用，避免启动时被误关。\r\nHome 菜单；Ctrl+End 切换。不包含升频或插帧。",Location=new Point(18,18),Size=new Size(684,200)});
+  if(LegacyBridge.Installed64(g)){Build64();return;}
+  Controls.Add(new Label{Text=LegacyBridge.IsL4D2(g)?"L4D2 单机实验适配（-insecure）\r\n部署到 bin，使用 32位 DX9 → 64位神经处理桥接。\r\n0.4.0 主菜单已运行；关卡测试曾出现长耗时，稳定性未通过。\r\n默认关闭，25%处理分辨率、1次处理，切出自动关闭。\r\n只在进入关卡后尝试 Ctrl+End 开启；Home 查看状态。\r\n本路线不包含帧生成，也不等于游戏原生 DLSS 5。\r\n回联机前使用“卸载并恢复文件”，再从 Steam 正常启动。":LegacyBridge.Check(g)+"\r\n\r\n0.4.0：本地试验适配，已通过红警3菜单短测；4K长时间稳定性待验证。\r\n0.3.0：保留原版，选中后可切回。两版均不内置，需自行取得并导入匹配目录。\r\n新安装默认关闭，50%分辨率、1次处理。版本切换保留画面设置。\r\n“下次启动开启”会关闭切出自动停用，避免启动时被误关。\r\nHome 菜单；Ctrl+End 切换。不包含升频或插帧。",Location=new Point(18,18),Size=new Size(684,200)});
   Controls.Add(new Label{Text="选择运行库",Location=new Point(18,225),Size=new Size(115,30)});
   version.DropDownStyle=ComboBoxStyle.DropDownList;version.Items.AddRange(new object[]{"Daniel 0.4.0（本地试验版）","Daniel 0.3.0（原版／回退）"});version.SelectedIndex=LegacyBridge.Version(g)=="0.3.0"?1:0;version.SetBounds(135,221,410,32);Controls.Add(version);
   buttons.SetBounds(18,267,684,140);Controls.Add(buttons);
@@ -118,6 +136,26 @@ public static class LegacyBridgeTests {
   File.WriteAllText(Path.Combine(root,"Data","d3d9.dll"),"old-mod");bool blocked=false;try{LegacyBridge.Install(game,s=>{});}catch{blocked=true;}
   Assert(blocked&&File.ReadAllText(Path.Combine(root,"Data","d3d9.dll"))=="old-mod","Existing proxy protected");
   Assert(!File.Exists(Path.Combine(root,"Data","amd-nr-host64.exe")),"No partial install on conflict");
-  Core.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"老游戏桥接测试.json"),new{passed=true,checks=13,scope="Synthetic x86 DX9 RA3 layout; inert synthetic package hashes; install, toggle, restore, proxy conflict. No GPU rendering test."});
+  string lroot=Path.Combine(root,"l4d2");Directory.CreateDirectory(Path.Combine(lroot,"bin"));
+  byte[] launcher=(byte[])pe.Clone();Array.Clear(launcher,300,8);
+  File.WriteAllBytes(Path.Combine(lroot,"left4dead2.exe"),launcher);
+  var lgame=new Game{Name="L4D2 fixture",Exe=Path.Combine(lroot,"left4dead2.exe"),Root=lroot};
+  Assert(LegacyBridge.Api(lgame)==null,"No guessed L4D2 support without renderer");
+  File.WriteAllBytes(Path.Combine(lroot,"bin","shaderapidx9.dll"),pe);
+  Assert(LegacyBridge.Api(lgame)=="d3d9","L4D2 renderer module detected");
+  bool offlineBlocked=false;try{LegacyBridge.Install(lgame,s=>{});}catch{offlineBlocked=true;}
+  Assert(offlineBlocked&&!File.Exists(Path.Combine(lroot,"bin","d3d9.dll")),"L4D2 needs offline selection");
+  lgame.OfflineOnly=true;LegacyBridge.Install(lgame,true,s=>{},false);
+  Assert(File.Exists(Path.Combine(lroot,"bin","d3d9.dll"))&&!File.Exists(Path.Combine(lroot,"d3d9.dll")),"L4D2 deploys into bin");
+  Assert(LegacyBridge.OfflineArguments(lgame).Contains("-insecure"),"L4D2 offline launch arguments");
+  LegacyBridge.Restore(lgame);Assert(!File.Exists(Path.Combine(lroot,"bin","d3d9.dll"))&&File.Exists(Path.Combine(lroot,"bin","shaderapidx9.dll")),"L4D2 restore preserves renderer");
+  var bgame=new Game{Name="Barotrauma fixture",Exe=Path.Combine(root,"barotrauma64","Barotrauma.exe")};Directory.CreateDirectory(Path.GetDirectoryName(bgame.Exe));File.WriteAllText(bgame.Exe,"fixture");
+  string fixtureIni=Path.Combine(root,"fixture64.ini");File.WriteAllText(fixtureIni,"[amd-nr]\nStartOn=0\nDisableOnAltTab=1\n");
+  StackEngine.ApplyPrepared(bgame,new StackProfile{Input="reshade64"},new Dictionary<string,string>{{"amd-nr.ini",fixtureIni}},message=>{});
+  Assert(LegacyBridge.Installed(bgame)&&LegacyBridge.Installed64(bgame),"Recognize managed 64-bit bridge");
+  Assert(LegacyBridge.DisplayStatus(bgame).Contains("配置关闭"),"64-bit disabled status");
+  LegacyBridge.SetEnabled(bgame,true);Assert(LegacyBridge.DisplayStatus(bgame).Contains("配置开启"),"64-bit toggle status");
+  LegacyBridge.Restore(bgame);Assert(!LegacyBridge.Installed(bgame),"64-bit restore");
+  Core.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"老游戏桥接测试.json"),new{passed=true,checks=23,scope="Synthetic x86 DX9 RA3 layout; inert synthetic package hashes; install, toggle, restore, proxy conflict. No GPU rendering test."});
  }
 }
